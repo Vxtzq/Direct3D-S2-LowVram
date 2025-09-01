@@ -43,7 +43,7 @@
   cd voxelize
   python setup.py install
   ```
-# Easy usage
+### Test installation
   ```
   python inference.py
   ```
