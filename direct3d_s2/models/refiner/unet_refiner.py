@@ -152,188 +152,142 @@ class GeoDecoder(nn.Module):
 
 
 class Voxel_RefinerXL(nn.Module):
-    def __init__(
-        self,
-        in_channels: int = 1,
-        out_channels: int = 1,
-        layers_per_block: int = 2,
-        layers_mid_block: int = 2,
-        patch_size: int =64,
-        res: int = 512,
-        use_checkpoint: bool = False,
-        use_fp16: bool = False,
-    ):
+    def __init__(self,
+                in_channels: int = 1,
+                out_channels: int = 1,
+                layers_per_block: int = 2,
+                layers_mid_block: int = 2,
+                patch_size: int = 192,
+                res: int = 512,
+                use_checkpoint: bool=False,
+                use_fp16: bool = False):
+
         super().__init__()
 
-        self.unet3d1 = UNet3DModel(
-            in_channels=16,
-            out_channels=8,
-            use_conv_out=False,
-            layers_per_block=layers_per_block,
-            layers_mid_block=layers_mid_block,
-            block_out_channels=(8, 32, 128, 512),
-            norm_num_groups=4,
-            use_checkpoint=use_checkpoint,
-        )
-        """
-        self.unet3d1.set_chunking_params(
-            chunk_size=64,        # 4x larger chunks  
-            overlap=12
-         )
-        """
+        self.unet3d1 = UNet3DModel(in_channels=16, out_channels=8, use_conv_out=False,
+                                   layers_per_block=layers_per_block, layers_mid_block=layers_mid_block, 
+                                   block_out_channels=(8, 32, 128,512), norm_num_groups=4, use_checkpoint=use_checkpoint)
         self.conv_in = nn.Conv3d(in_channels, 8, kernel_size=3, padding=1)
         self.latent_mlp = GeoDecoder(32)
-        self.adaptive_conv1 = nn.Sequential(
-            nn.Conv3d(8, 8, kernel_size=3, padding=1), nn.ReLU(), nn.Conv3d(8, 27, kernel_size=3, padding=1, bias=False)
-        )
-        self.adaptive_conv2 = nn.Sequential(
-            nn.Conv3d(8, 8, kernel_size=3, padding=1), nn.ReLU(), nn.Conv3d(8, 27, kernel_size=3, padding=1, bias=False)
-        )
-        self.adaptive_conv3 = nn.Sequential(
-            nn.Conv3d(8, 8, kernel_size=3, padding=1), nn.ReLU(), nn.Conv3d(8, 27, kernel_size=3, padding=1, bias=False)
-        )
+        self.adaptive_conv1 = nn.Sequential(nn.Conv3d(8, 8, kernel_size=3, padding=1),
+                                            nn.ReLU(),
+                                            nn.Conv3d(8, 27, kernel_size=3, padding=1, bias=False))
+        self.adaptive_conv2 = nn.Sequential(nn.Conv3d(8, 8, kernel_size=3, padding=1),
+                                            nn.ReLU(),
+                                            nn.Conv3d(8, 27, kernel_size=3, padding=1, bias=False))
+        self.adaptive_conv3 = nn.Sequential(nn.Conv3d(8, 8, kernel_size=3, padding=1),
+                                            nn.ReLU(),
+                                            nn.Conv3d(8, 27, kernel_size=3, padding=1, bias=False))
         self.mid_conv = nn.Conv3d(8, 8, kernel_size=3, padding=1)
         self.conv_out = nn.Conv3d(8, out_channels, kernel_size=3, padding=1)
-
         self.patch_size = patch_size
         self.res = res
 
         self.use_fp16 = use_fp16
         self.dtype = torch.float16 if use_fp16 else torch.float32
-
-        # If requested, convert *entire module* to fp16. Use .half() so *all* submodules/params/buffers
-        # are cast consistently. This avoids dtype mismatches.
         if use_fp16:
-            self.half()
-    def to_cpu(self):
+            self.convert_to_fp16()
+
+    def convert_to_fp16(self) -> None:
         """
-        Move the entire module to CPU and convert all FP16/FP32 parameters and buffers to float32.
-        Clears cached GPU memory.
+        Convert the torso of the model to float16.
         """
-        def recursive_cpu(module):
-            # Move parameters and buffers to CPU as float32
-            for name, param in module._parameters.items():
-                if param is not None:
-                    module._parameters[name] = param.detach().to("cpu", dtype=torch.float32)
-            for name, buf in module._buffers.items():
-                if buf is not None:
-                    module._buffers[name] = buf.detach().to("cpu", dtype=torch.float32)
-            # Recursively handle child modules
-            for child in module.children():
-                recursive_cpu(child)
+        # self.blocks.apply(convert_module_to_f16)
+        self.apply(convert_module_to_f16)
 
-        recursive_cpu(self)
-        # Ensure module itself is on CPU
-        self.cpu()
-        # Clear GPU memory
-        torch.cuda.empty_cache()
-        gc.collect()
-    def to_device(self, device: torch.device):
-        """Move entire module to device (keeps dtype)."""
-        self.to(device)
-        return self
+    def run(self,
+            reconst_x,
+            feat, 
+            mc_threshold=0,
+        ):
+        batch_size = int(reconst_x.coords[..., 0].max()) + 1
+        sparse_sdf, sparse_index = reconst_x.feats, reconst_x.coords
+        sparse_feat = feat.feats
+        device = sparse_sdf.device
+        dtype = sparse_sdf.dtype
+        res = self.res
 
-    def run(self, reconst_x, feat, mc_threshold=0):
-        """
-        VRAM-optimized refiner forward: sparse inputs, FP16 on GPU, patchwise streaming to CPU.
-        """
-        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        self.to(device).eval()
+        sdfs = []
+        for i in range(batch_size):
+            idx = sparse_index[..., 0] == i
+            sparse_sdf_i, sparse_index_i = sparse_sdf[idx].squeeze(-1),  sparse_index[idx][..., 1:]
+            sdf = torch.ones((res, res, res)).to(device).to(dtype)
+            sdf[sparse_index_i[..., 0], sparse_index_i[..., 1], sparse_index_i[..., 2]] = sparse_sdf_i
+            sdfs.append(sdf.unsqueeze(0))
 
-        model_dtype = torch.float16 if self.use_fp16 else torch.float32
-
-        # Move sparse data to device
-        sparse_sdf = reconst_x.feats.to(device, dtype=model_dtype)
-        sparse_index = reconst_x.coords.to(device)
-        sparse_feat = feat.feats.to(device, dtype=model_dtype)
-        batch_size = int(sparse_index[..., 0].max()) + 1
-
-        patch_size = self.patch_size
+        sdfs = torch.stack(sdfs, dim=0)
+        feats = torch.zeros((batch_size, sparse_feat.shape[-1], res, res, res), 
+                            device=device, dtype=dtype)
+        feats[sparse_index[...,0],:,sparse_index[...,1],sparse_index[...,2],sparse_index[...,3]] = sparse_feat
+        
+        N = sdfs.shape[0]
+        outputs = torch.ones([N,1,res,res,res], dtype=dtype, device=device)
         stride = 160
+        patch_size = self.patch_size
         step = 3
-        feat_dim = sparse_feat.shape[-1]
+        sdfs = sdfs.to(dtype)
+        feats = feats.to(dtype)
+        patchs=[]
+        for i in range(step):
+            for j in range(step):
+                for k in tqdm(range(step)):
+                    sdf = sdfs[:, :, stride * i: stride * i + patch_size,
+                               stride * j: stride * j + patch_size,
+                               stride * k: stride * k + patch_size]
+                    crop_feats = feats[:, :, stride * i: stride * i + patch_size, 
+                                       stride * j: stride * j + patch_size, 
+                                       stride * k: stride * k + patch_size]
+                    inputs = self.conv_in(sdf)
+                    crop_feats = self.latent_mlp(crop_feats.permute(0,2,3,4,1)).permute(0,4,1,2,3)
+                    inputs = torch.cat([inputs, crop_feats],dim=1)
+                    mid_feat = self.unet3d1(inputs)  
+                    mid_feat = adaptive_block(mid_feat, self.adaptive_conv1)
+                    mid_feat = self.mid_conv(mid_feat)
+                    mid_feat = adaptive_block(mid_feat, self.adaptive_conv2)
+                    final_feat = self.conv_out(mid_feat)
+                    final_feat = adaptive_block(final_feat, self.adaptive_conv3, weights_=mid_feat)
+                    output = F.tanh(final_feat)
+                    patchs.append(output)
+        weights = torch.linspace(0, 1, steps=32, device=device, dtype=dtype)
+        lines=[]
+        for i in range(9):
+            out1 = patchs[i * 3]
+            out2 = patchs[i * 3 + 1]
+            out3 = patchs[i * 3 + 2]
+            line = torch.ones([N, 1, 192, 192,res], dtype=dtype, device=device) * 2
+            line[:, :, :, :, :160] = out1[:, :, :, :, :160]
+            line[:, :, :, :, 192:320] = out2[:, :, :, :, 32:160]
+            line[:, :, :, :, 352:] = out3[:, :, :, :, 32:]
+            
+            line[:,:,:,:,160:192] = out1[:,:,:,:,160:] * (1-weights.reshape(1,1,1,1,-1)) + out2[:,:,:,:,:32] * weights.reshape(1,1,1,1,-1)
+            line[:,:,:,:,320:352] = out2[:,:,:,:,160:] * (1-weights.reshape(1,1,1,1,-1)) + out3[:,:,:,:,:32] * weights.reshape(1,1,1,1,-1)
+            lines.append(line)
+        layers=[]
+        for i in range(3):
+            line1 = lines[i*3]
+            line2 = lines[i*3+1]
+            line3 = lines[i*3+2]
+            layer = torch.ones([N,1,192,res,res], device=device, dtype=dtype) * 2
+            layer[:,:,:,:160] = line1[:,:,:,:160]
+            layer[:,:,:,192:320] = line2[:,:,:,32:160]
+            layer[:,:,:,352:] = line3[:,:,:,32:]
+            layer[:,:,:,160:192] = line1[:,:,:,160:]*(1-weights.reshape(1,1,1,-1,1))+line2[:,:,:,:32]*weights.reshape(1,1,1,-1,1)
+            layer[:,:,:,320:352] = line2[:,:,:,160:]*(1-weights.reshape(1,1,1,-1,1))+line3[:,:,:,:32]*weights.reshape(1,1,1,-1,1)
+            layers.append(layer)
+        outputs[:,:,:160] = layers[0][:,:,:160]
+        outputs[:,:,192:320] = layers[1][:,:,32:160]
+        outputs[:,:,352:] = layers[2][:,:,32:]
+        outputs[:,:,160:192] = layers[0][:,:,160:]*(1-weights.reshape(1,1,-1,1,1))+layers[1][:,:,:32]*weights.reshape(1,1,-1,1,1)
+        outputs[:,:,320:352] = layers[1][:,:,160:]*(1-weights.reshape(1,1,-1,1,1))+layers[2][:,:,:32]*weights.reshape(1,1,-1,1,1)
+        # outputs = -outputs
 
-        # CPU accumulator
-        outputs = torch.zeros((batch_size, 1, self.res, self.res, self.res),
-                              dtype=torch.float32, device="cpu")
-
-        # Preallocate patch tensors once
-        sdf_tensor = torch.empty((1, 1, patch_size, patch_size, patch_size), device=device, dtype=model_dtype)
-        feat_tensor = torch.empty((1, feat_dim, patch_size, patch_size, patch_size), device=device, dtype=model_dtype)
-        offset_buf = torch.zeros(3, device=device, dtype=torch.long)
-
-        if self.use_fp16:
-            self.latent_mlp = self.latent_mlp.half()
-
-        with torch.inference_mode():
-            for b in range(batch_size):
-                idx = sparse_index[..., 0] == b
-                coords_b = sparse_index[idx][:, 1:]
-                sdf_b = sparse_sdf[idx].squeeze(-1)
-                feat_b = sparse_feat[idx]
-
-                for i in range(step):
-                    for j in range(step):
-                        for k in range(step):
-                            x0, y0, z0 = stride*i, stride*j, stride*k
-                            mask = (
-                                (coords_b[:, 0] >= x0) & (coords_b[:, 0] < x0 + patch_size) &
-                                (coords_b[:, 1] >= y0) & (coords_b[:, 1] < y0 + patch_size) &
-                                (coords_b[:, 2] >= z0) & (coords_b[:, 2] < z0 + patch_size)
-                            )
-                            if not mask.any():
-                                continue
-
-                            coords_patch = coords_b[mask].long()
-                            offset_buf[:] = torch.tensor([x0, y0, z0], device=device)
-                            coords_patch.sub_(offset_buf)
-
-                            sdf_tensor.fill_(1.0)
-                            feat_tensor.zero_()
-                            sdf_tensor[0, 0, coords_patch[:,0], coords_patch[:,1], coords_patch[:,2]] = sdf_b[mask]
-                            feat_tensor[0, :, coords_patch[:,0], coords_patch[:,1], coords_patch[:,2]] = feat_b[mask].T
-
-                            # Forward pass in fp32
-                            feat_latent = self.latent_mlp(feat_tensor.permute(0,2,3,4,1)).permute(0,4,1,2,3)
-                            x_in = torch.cat([self.conv_in(sdf_tensor), feat_latent], dim=1)
-
-                            mid_feat = self.unet3d1(x_in)
-                            mid_feat = adaptive_block(mid_feat, self.adaptive_conv1, patch=patch_size)
-                            mid_feat = self.mid_conv(mid_feat)
-                            mid_feat = adaptive_block(mid_feat, self.adaptive_conv2, patch=patch_size)
-                            final_feat = self.conv_out(mid_feat)
-                            final_feat = adaptive_block(final_feat, self.adaptive_conv3, weights_=mid_feat, patch=patch_size)
-
-                            # Stream to CPU as float32
-                            out_patch = final_feat[0:1].detach().to("cpu", dtype=torch.float32)
-                            _, _, px, py, pz = out_patch.shape
-                            outputs[b, :, x0:x0+px, y0:y0+py, z0:z0+pz] = out_patch[:, :1]
-
-                            del feat_latent, x_in, mid_feat, final_feat, out_patch
-
-                del coords_b, sdf_b, feat_b, idx
-                torch.cuda.empty_cache()
-
-
-
-        # Marching cubes (CPU)
         meshes = []
-        for b in range(batch_size):
-            out_np = outputs[b,0].numpy()
-            verts, faces, _, _ = measure.marching_cubes(out_np, level=mc_threshold, method="lewiner")
-            verts = verts / float(self.res) * 2.0 - 1.0
-            meshes.append(trimesh.Trimesh(verts, faces))
-            del out_np, verts, faces
-            gc.collect()
-
-        del sparse_sdf, sparse_feat, sparse_index, outputs, sdf_tensor, feat_tensor
-        torch.cuda.empty_cache()
-        gc.collect()
-
+        for i in range(outputs.shape[0]):
+            vertices, faces, _, _ = measure.marching_cubes(outputs[i, 0].cpu().numpy(), level=mc_threshold, method='lewiner')
+            vertices = vertices / res * 2 - 1
+            meshes.append(trimesh.Trimesh(vertices, faces))
+        
         return meshes
-
-
-
 
 
 class Voxel_RefinerXL_sign(nn.Module):
@@ -342,11 +296,11 @@ class Voxel_RefinerXL_sign(nn.Module):
                 out_channels: int=1,
                 layers_per_block: int=2,
                 layers_mid_block: int=2,
-                patch_size: int=64,
+                patch_size: int=192,
                 res: int=512,
-                infer_patch_size: int=64,
+                infer_patch_size: int=192,
                 use_checkpoint: bool=False,
-                use_fp16: bool=True):
+                use_fp16: bool = False):
         super().__init__()
 
         self.unet3d1 = UNet3DModel(in_channels=8, out_channels=8, use_conv_out=False, 
@@ -361,138 +315,71 @@ class Voxel_RefinerXL_sign(nn.Module):
        
         self.use_fp16 = use_fp16
         self.dtype = torch.float16 if use_fp16 else torch.float32
-
         if use_fp16:
             self.convert_to_fp16()
-    def to_device(self, device: torch.device):
-        """Move entire module to device (keeps dtype)."""
-        self.to(device)
-        return self
-    def to_cpu(self):
-        """
-        Move module parameters and buffers to CPU (float32) in-place, clear grads and cached CUDA tensors.
-        """
-        for module in self.modules():
-            # parameters
-            for p_name, p in list(module._parameters.items()):
-                if p is None:
-                    continue
-                # move param tensor data to cpu and replace in-place
-                p_data = p.data.detach().to("cpu", dtype=torch.float32)
-                # replace Parameter with new CPU tensor wrapped as Parameter
-                new_p = torch.nn.Parameter(p_data, requires_grad=p.requires_grad)
-                module._parameters[p_name] = new_p
-                # clear grad to remove GPU ref
-                if p.grad is not None:
-                    try:
-                        p.grad = None
-                    except Exception:
-                        pass
 
-            # buffers
-            for b_name, buf in list(module._buffers.items()):
-                if buf is None:
-                    continue
-                module._buffers[b_name] = buf.detach().to("cpu", dtype=torch.float32)
-
-        # ensure module itself moved to CPU
-        self.cpu()
-        # clear cache and gc
-        gc.collect()
-        torch.cuda.empty_cache()
-        return self
-
-
-    def convert_to_fp16(self):
-        """Convert model to FP16, but keep BatchNorm in FP32."""
-        def recursive_half(module):
-            if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
-                module.float()  # keep BN in FP32
-            else:
-                module.half()
-            for child in module.children():
-                recursive_half(child)
-        recursive_half(self)
-
-    def run(self, reconst_x=None, feat=None, mc_threshold=0):
-        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-        dtype = self.dtype
-        cpu_dtype = torch.float16 if self.use_fp16 else torch.float32
-
-        sparse_sdf, sparse_index = reconst_x.feats.to(device, dtype=dtype), reconst_x.coords.to(device)
-        batch_size = int(sparse_index[..., 0].max()) + 1
+    def convert_to_fp16(self) -> None:
+        self.apply(convert_module_to_f16)
+    
+    def run(self,
+             reconst_x=None,
+             feat=None, 
+             mc_threshold=0,
+        ):
+        batch_size = int(reconst_x.coords[..., 0].max()) + 1
+        sparse_sdf, sparse_index = reconst_x.feats, reconst_x.coords
+        device = sparse_sdf.device
         voxel_resolution = 1024
-        patch_size = self.patch_size
+        sdfs=[]
+        for i in range(batch_size):
+            idx = sparse_index[..., 0] == i
+            sparse_sdf_i, sparse_index_i = sparse_sdf[idx].squeeze(-1),  sparse_index[idx][..., 1:]
+            sdf = torch.ones((voxel_resolution, voxel_resolution, voxel_resolution)).to(device).to(sparse_sdf_i.dtype)
+            sdf[sparse_index_i[..., 0], sparse_index_i[..., 1], sparse_index_i[..., 2]] = sparse_sdf_i
+            sdfs.append(sdf.unsqueeze(0))
+
+        sdfs1024 = torch.stack(sdfs,dim=0)
+        reconst_x1024 = reconst_x
+        reconst_x = self.downsample(reconst_x)
+        batch_size = int(reconst_x.coords[..., 0].max()) + 1
+        sparse_sdf, sparse_index = reconst_x.feats, reconst_x.coords
+        device = sparse_sdf.device
+        dtype = sparse_sdf.dtype
+        voxel_resolution = 512
+        sdfs = torch.ones((batch_size, voxel_resolution, voxel_resolution, voxel_resolution),device=device, dtype=sparse_sdf.dtype)
+        sdfs[sparse_index[...,0],sparse_index[...,1],sparse_index[...,2],sparse_index[...,3]] = sparse_sdf.squeeze(-1)
+        sdfs = sdfs.unsqueeze(1)
+        
+        N = sdfs.shape[0]
+        outputs = torch.ones([N,1,512,512,512],device=sdfs.device, dtype=dtype)
         stride = 128
-        step = (voxel_resolution + stride - 1) // stride
+        patch_size = self.patch_size
+        step = 3
+        for i in range(step):
+            for j in range(step):
+                for k in tqdm(range(step)):
+                    sdf = sdfs[:,:,stride*i:stride*i+patch_size,stride*j:stride*j+patch_size,stride*k:stride*k+patch_size]
+                    inputs = self.conv_in(sdf)
+                    mid_feat = self.unet3d1(inputs)  
+                    final_feat = self.conv_out(mid_feat)
+                    output = F.sigmoid(final_feat)
+                    output[output>=0.5] = 1
+                    output[output<0.5] = -1
+                    outputs[:, :, stride*i:stride*i+patch_size, stride*j:stride*j+patch_size, stride*k:stride*k+patch_size] = output
+        outputs = outputs.repeat_interleave(2, dim=2).repeat_interleave(2, dim=3).repeat_interleave(2, dim=4)
+        sdfs = sdfs1024.clone()
+        sdfs = sdfs.abs()*outputs
+        
+        sparse_index1024 = reconst_x1024.coords
+        
+        sdfs[sparse_index1024[...,0], :, sparse_index1024[...,1], sparse_index1024[...,2],sparse_index1024[...,3]] = sdfs1024[sparse_index1024[...,0], :, sparse_index1024[...,1], sparse_index1024[...,2], sparse_index1024[...,3]]
+        outputs = sdfs.cpu().numpy()
+        grid_size = outputs.shape[2]
 
-        # CPU accumulator
-        sdfs_cpu = torch.ones((batch_size, 1, voxel_resolution, voxel_resolution, voxel_resolution),
-                              dtype=cpu_dtype, device="cpu")
-
-        # Preallocate GPU patch tensor once
-        patch_tensor = torch.ones((1, 1, patch_size, patch_size, patch_size), device=device, dtype=dtype)
-        offset_buf = torch.zeros(3, device=device, dtype=torch.long)
-
-        self.to(device).eval()
-
-        with torch.inference_mode():
-            for b in range(batch_size):
-                idx = sparse_index[..., 0] == b
-                coords_b = sparse_index[idx][:, 1:]
-                sdf_b = sparse_sdf[idx].squeeze(-1)
-
-                sdfs_cpu[b, 0, coords_b[:,0].cpu(), coords_b[:,1].cpu(), coords_b[:,2].cpu()] = sdf_b.cpu()
-
-                for i in range(step):
-                    for j in range(step):
-                        for k in range(step):
-                            start = torch.tensor([stride*i, stride*j, stride*k], device=device)
-                            end = torch.min(start + patch_size, torch.tensor([voxel_resolution]*3, device=device))
-
-                            mask = (
-                                (coords_b[:,0] >= start[0]) & (coords_b[:,0] < end[0]) &
-                                (coords_b[:,1] >= start[1]) & (coords_b[:,1] < end[1]) &
-                                (coords_b[:,2] >= start[2]) & (coords_b[:,2] < end[2])
-                            )
-                            if not mask.any():
-                                continue
-
-                            coords_patch = coords_b[mask].long()
-                            offset_buf[:] = start
-                            local_coords = coords_patch - offset_buf
-
-                            patch_tensor.fill_(1.0)
-                            patch_tensor[0,0,local_coords[:,0],local_coords[:,1],local_coords[:,2]] = sdf_b[mask]
-
-                            # Forward
-                            x_in = self.conv_in(patch_tensor)
-                            mid_feat = self.unet3d1(x_in)
-                            final_feat = self.conv_out(mid_feat)
-                            output = torch.sign(final_feat)
-
-                            # Stream to CPU
-                            out_slice = output[0,0,:end[0]-start[0],:end[1]-start[1],:end[2]-start[2]].cpu()
-                            sdfs_cpu[b,0,start[0]:end[0],start[1]:end[1],start[2]:end[2]] = out_slice
-
-                            del x_in, mid_feat, final_feat, output, local_coords, out_slice
-
-                del coords_b, sdf_b, idx
-                torch.cuda.empty_cache()
-
-        # Marching cubes (CPU)
         meshes = []
-        for b in range(batch_size):
-            out_np = sdfs_cpu[b,0].float().numpy()
-            verts, faces, _, _ = measure.marching_cubes(out_np, level=mc_threshold, method="lewiner")
-            verts = verts / voxel_resolution * 2 - 1
-            meshes.append(trimesh.Trimesh(verts, faces))
-
-        del sdfs_cpu, sparse_sdf, sparse_index
-        torch.cuda.empty_cache()
-        gc.collect()
-
+        for i in range(outputs.shape[0]):
+            outputs_torch = outputs[i,0]
+            vertices, faces, _, _ = measure.marching_cubes(outputs_torch, level=mc_threshold, method="lewiner")
+            vertices = vertices / grid_size * 2 - 1
+            meshes.append(trimesh.Trimesh(vertices, faces))
         return meshes
-
-
-
