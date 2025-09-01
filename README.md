@@ -34,9 +34,9 @@ pip install git+https://github.com/Deathdadev/torchsparse.git
 
 - Install submodules 
 ```bash
-# Or build from source
-export MAX_JOBS=4
-pip install git+https://github.com/Deathdadev/torchsparse.git
+cd third_party
+cd voxelize
+python setup.py install
 ```
 # Changes
 
