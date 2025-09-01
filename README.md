@@ -13,6 +13,11 @@
 
 ---
 # Easy install 
+Requirements : 
+
+- torch>2.0.0
+- cuda 11.8 or above
+
 - Install dependencies:
 
   ```bash
@@ -38,6 +43,11 @@
   cd voxelize
   python setup.py install
   ```
+# Easy usage
+  ```
+  python inference.py
+  ```
+
 # Changes
 
 This is an **optimized version** of the original repo [Direct3D-S2](https://github.com/DreamTechAI/Direct3D-S2) from DreamTechAI, designed to **work with ~3x less VRAM** at the cost of some inference speed.
