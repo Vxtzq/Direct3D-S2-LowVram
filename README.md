@@ -1,47 +1,62 @@
-
-# Direct3D‑S2-LowVram: Gigascale 3D Generation Made Easy with Spatial Sparse Attention on Lower GPU !
+# Direct3D‑S2-LowVram: Gigascale 3D Generation Made Easy with Spatial Sparse Attention on Lower GPU
 
 <div align="center">
-  <a href=https://www.neural4d.com/research/direct3d-s2 target="_blank"><img src=https://img.shields.io/badge/Project%20Page-333399.svg?logo=googlehome height=22px></a>
-  <a href=https://huggingface.co/spaces/wushuang98/Direct3D-S2-v1.0-demo target="_blank"><img src=https://img.shields.io/badge/%F0%9F%A4%97%20Demo-276cb4.svg height=22px></a>
-  <a href=https://huggingface.co/spaces/wushuang98/Direct3D-S2-v1.0-demo target="_blank"><img src=https://img.shields.io/badge/%F0%9F%A4%97%20Models-d96902.svg height=22px></a>
-  <a href=https://arxiv.org/pdf/2505.17412 target="_blank"><img src=https://img.shields.io/badge/Arxiv-b5212f.svg?logo=arxiv height=22px></a>
+  <a href="https://www.neural4d.com/research/direct3d-s2" target="_blank"><img src="https://img.shields.io/badge/Project%20Page-333399.svg?logo=googlehome" height="22px"></a>
+  <a href="https://huggingface.co/spaces/wushuang98/Direct3D-S2-v1.0-demo" target="_blank"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Demo-276cb4.svg" height="22px"></a>
+  <a href="https://huggingface.co/spaces/wushuang98/Direct3D-S2-v1.0-demo" target="_blank"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Models-d96902.svg" height="22px"></a>
+  <a href="https://arxiv.org/pdf/2505.17412" target="_blank"><img src="https://img.shields.io/badge/Arxiv-b5212f.svg?logo=arxiv" height="22px"></a>
 </div>
 
-<div style="background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); display: inline-block; padding: 0px;">
-    <img id="teaser" src="assets/teaserv6.png" alt="Teaser image of Direct3D-S2"/>
+<div align="center" style="background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.15); display: inline-block; padding: 8px;">
+  <img id="teaser" src="assets/teaserv6.png" alt="Teaser image of Direct3D-S2"/>
 </div>
 
 ---
+
 # Changes
 
-## Original repo : 
+This is an **optimized version** of the original repo [Direct3D-S2](https://github.com/DreamTechAI/Direct3D-S2) from DreamTechAI, designed to **work with ~3x less VRAM** at the cost of some inference speed.
+
+**Key modifications:**
+- Use of **fp16** almost everywhere in the pipeline  
+- **Chunked processing** for some modules to reduce the need for huge 3D arrays  
+
+---
+
+## Original repo VRAM requirements
+
+| Resolution | VRAM Requirements | Inference Time |
+|------------|-----------------|----------------|
+| 512        | 10 GB           | unspecified    |
+| 1024       | 24 GB           | unspecified    |
+
+---
+
+## This repo VRAM requirements
+
+**Without refiner:**
+
 | Resolution | VRAM Requirements |
-|------------|------------------|
-| 512      | 10 GB           |
-| 1024         | 24 GB         |
+|------------|-----------------|
+| 512        | 4 GB            |
+| 1024       | 8 GB            |
 
-## This repo :
-Without using refiner :
+**With refiner:**
+
 | Resolution | VRAM Requirements |
-|------------|------------------|
-| 512      | 4 GB           |
-| 1024         | 8 GB         |
+|------------|-----------------|
+| 1080p      | 6 GB            |
+| 4K         | 8 GB            |
 
-With refiner :
-| Resolution | VRAM Requirements |
-|------------|------------------|
-| 1080p      | 6 GB           |
-| 4K         | 8 GB         |
+> ⚠️ Note: Using the refiner decreases inference speed due to patched processing of voxels.
 
-Note that refiner usage decreases inference speed, due to patched processing of voxels
-
-
-
+---
 
 ## ✨ Credits
-- Original Direct3D-S2 Implementation : https://github.com/DreamTechAI/Direct3D-S2
-- Direct3D-S2 authors for their work
+- Original Direct3D-S2 Implementation: [DreamTechAI/Direct3D-S2](https://github.com/DreamTechAI/Direct3D-S2)  
+- Thanks to the **Direct3D-S2 authors** for their work and inspiration
+
+---
 
 # Original repository description
 
