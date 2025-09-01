@@ -26,18 +26,18 @@
   
   ```
 - Install torchsparse
-```bash
-# Or build from source
-export MAX_JOBS=4
-pip install git+https://github.com/Deathdadev/torchsparse.git
-```
+  ```bash
+
+  export MAX_JOBS=4
+  pip install git+https://github.com/Deathdadev/torchsparse.git
+  ```
 
 - Install submodules 
-```bash
-cd third_party
-cd voxelize
-python setup.py install
-```
+  ```bash
+  cd third_party
+  cd voxelize
+  python setup.py install
+  ```
 # Changes
 
 This is an **optimized version** of the original repo [Direct3D-S2](https://github.com/DreamTechAI/Direct3D-S2) from DreamTechAI, designed to **work with ~3x less VRAM** at the cost of some inference speed.
