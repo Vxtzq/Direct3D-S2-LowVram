@@ -69,19 +69,21 @@ This is an **optimized version** of the original repo [Direct3D-S2](https://gith
 
 ## This repo VRAM requirements
 
+Note that 6GB vram are required to load the pipeline, might be easy to decrease with cpu offloading
+
 **Without refiner:**
 
 | Resolution | VRAM Requirements | Inference Time |
 |------------|-----------------|----------------|
-| 512        | 4 GB            |
-| 1024       | 8 GB            |
+| 512        | 4 GB            |~75 seconds |
+| 1024       | 8 GB            |~280 seconds |
 
 **With refiner:**
 
 | Resolution | VRAM Requirements | Inference Time |
 |------------|-----------------|----------------|
-| 1080p      | 6 GB            |
-| 4K         | 8 GB            |
+| 1080p      | 6 GB            |~90 seconds |
+| 4K         | 8 GB            |~320 seconds |
 
 > ⚠️ Note: Using the refiner decreases inference speed due to patched processing of voxels.
 
