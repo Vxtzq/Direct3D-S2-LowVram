@@ -228,24 +228,14 @@ def postprocess_mesh(
 ):
     """
     Postprocess a mesh by simplifying, removing invisible faces, and removing isolated pieces.
-
-    Args:
-        vertices (np.array): Vertices of the mesh. Shape (V, 3).
-        faces (np.array): Faces of the mesh. Shape (F, 3).
-        simplify (bool): Whether to simplify the mesh, using quadric edge collapse.
-        simplify_ratio (float): Ratio of faces to keep after simplification.
-        fill_holes (bool): Whether to fill holes in the mesh.
-        fill_holes_max_hole_size (float): Maximum area of a hole to fill.
-        fill_holes_max_hole_nbe (int): Maximum number of boundary edges of a hole to fill.
-        fill_holes_resolution (int): Resolution of the rasterization.
-        fill_holes_num_views (int): Number of views to rasterize the mesh.
-        verbose (bool): Whether to print progress.
     """
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if verbose:
         tqdm.write(f'Before postprocess: {vertices.shape[0]} vertices, {faces.shape[0]} faces')
 
-    # Simplify
+    # Simplify (PyVista → still CPU)
     if simplify and simplify_ratio > 0:
         mesh = pv.PolyData(vertices, np.concatenate([np.full((faces.shape[0], 1), 3), faces], axis=1))
         mesh = mesh.decimate(simplify_ratio, progress_bar=verbose)
@@ -253,11 +243,13 @@ def postprocess_mesh(
         if verbose:
             tqdm.write(f'After decimate: {vertices.shape[0]} vertices, {faces.shape[0]} faces')
 
-    # Remove invisible faces
+    # Hole filling (move to GPU if possible)
     if fill_holes:
-        vertices, faces = torch.tensor(vertices).cuda(), torch.tensor(faces.astype(np.int32)).cuda()
-        vertices, faces = _fill_holes(
-            vertices, faces,
+        vertices_t = torch.tensor(vertices, device=device)
+        faces_t = torch.tensor(faces.astype(np.int32), device=device)
+
+        vertices_t, faces_t = _fill_holes(
+            vertices_t, faces_t,
             max_hole_size=fill_holes_max_hole_size,
             max_hole_nbe=fill_holes_max_hole_nbe,
             resolution=fill_holes_resolution,
@@ -265,7 +257,9 @@ def postprocess_mesh(
             debug=debug,
             verbose=verbose,
         )
-        vertices, faces = vertices.cpu().numpy(), faces.cpu().numpy()
+
+        vertices, faces = vertices_t.cpu().numpy(), faces_t.cpu().numpy()
+
         if verbose:
             tqdm.write(f'After remove invisible faces: {vertices.shape[0]} vertices, {faces.shape[0]} faces')
 
