@@ -13,10 +13,10 @@
 
 ---
 # Easy install 
-Requirements : 
+### Requirements : 
 
-- torch>2.0.0
-- cuda 11.8 or above
+- *torch>2.0.0*
+- *cuda 11.8* or above
 
 - Install dependencies:
 
