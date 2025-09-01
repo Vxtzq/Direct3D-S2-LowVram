@@ -78,7 +78,6 @@ def get_up_block(
     raise ValueError(f"{up_block_type} does not exist.")
 
 class Downsample3D(nn.Module):
-
     def __init__(
         self,
         channels: int,
@@ -92,20 +91,18 @@ class Downsample3D(nn.Module):
         stride = 2
 
         self.conv = nn.Conv3d(
-                self.channels, self.out_channels, kernel_size=kernel_size, stride=stride, bias=bias
-            )
+            self.channels, self.out_channels, kernel_size=kernel_size, stride=stride, bias=bias
+        )
 
     def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         assert hidden_states.shape[1] == self.channels
-
-        assert hidden_states.shape[1] == self.channels
-
+        # Cast input to layer's dtype
+        hidden_states = hidden_states.to(self.conv.weight.dtype)
         hidden_states = self.conv(hidden_states)
-
         return hidden_states
 
-class Upsample3D(nn.Module):
 
+class Upsample3D(nn.Module):
     def __init__(
         self,
         channels: int,
@@ -134,7 +131,9 @@ class Upsample3D(nn.Module):
         elif use_conv:
             if kernel_size is None:
                 kernel_size = 3
-            conv = nn.Conv3d(self.channels, self.out_channels, kernel_size=kernel_size, padding=padding, bias=bias)
+            conv = nn.Conv3d(
+                self.channels, self.out_channels, kernel_size=kernel_size, padding=padding, bias=bias
+            )
 
         if name == "conv":
             self.conv = conv
@@ -142,13 +141,15 @@ class Upsample3D(nn.Module):
             self.Conv2d_0 = conv
 
     def forward(self, hidden_states: torch.Tensor, output_size: Optional[int] = None) -> torch.Tensor:
-
         assert hidden_states.shape[1] == self.channels
-
+        # Cast input to layer's dtype
+        if self.use_conv_transpose or self.use_conv:
+            target_conv = self.conv if self.name == "conv" else self.Conv2d_0
+            hidden_states = hidden_states.to(target_conv.weight.dtype)
 
         if self.use_conv_transpose:
             return self.conv(hidden_states)
-    
+
         if hidden_states.shape[0] >= 64 or hidden_states.shape[-1] >= 64:
             hidden_states = hidden_states.contiguous()
 
@@ -167,7 +168,6 @@ class Upsample3D(nn.Module):
         return hidden_states
     
 class ResnetBlock3D(nn.Module):
-
     def __init__(
         self,
         *,
@@ -200,9 +200,7 @@ class ResnetBlock3D(nn.Module):
             groups_out = groups
 
         self.norm1 = torch.nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
-
         self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-
 
         self.norm2 = torch.nn.GroupNorm(num_groups=groups_out, num_channels=out_channels, eps=eps, affine=True)
         self.dropout = torch.nn.Dropout(dropout)
@@ -218,7 +216,6 @@ class ResnetBlock3D(nn.Module):
             self.downsample = Downsample3D(in_channels)
 
         self.use_in_shortcut = self.in_channels != conv_2d_out_channels if use_in_shortcut is None else use_in_shortcut
-
         self.conv_shortcut = None
         if self.use_in_shortcut:
             self.conv_shortcut = nn.Conv3d(
@@ -231,10 +228,10 @@ class ResnetBlock3D(nn.Module):
             )
 
     def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
-
         hidden_states = input_tensor
-        dtype = hidden_states.dtype
-        hidden_states = self.norm1(hidden_states.float()).to(dtype)
+
+        # FP16-safe: cast to norm1 weight dtype
+        hidden_states = self.norm1(hidden_states.to(self.norm1.weight.dtype))
         hidden_states = self.nonlinearity(hidden_states)
 
         if self.upsample is not None:
@@ -249,8 +246,8 @@ class ResnetBlock3D(nn.Module):
 
         hidden_states = self.conv1(hidden_states)
 
-        hidden_states = self.norm2(hidden_states.float()).to(dtype)
-
+        # FP16-safe: cast to norm2 weight dtype
+        hidden_states = self.norm2(hidden_states.to(self.norm2.weight.dtype))
         hidden_states = self.nonlinearity(hidden_states)
 
         hidden_states = self.dropout(hidden_states)
@@ -260,7 +257,6 @@ class ResnetBlock3D(nn.Module):
             input_tensor = self.conv_shortcut(input_tensor)
 
         output_tensor = (input_tensor + hidden_states) / self.output_scale_factor
-
         return output_tensor
 
 class DownBlock3D(nn.Module):
@@ -281,10 +277,10 @@ class DownBlock3D(nn.Module):
         resnets = []
 
         for i in range(num_layers):
-            in_channels = in_channels if i == 0 else out_channels
+            in_ch = in_channels if i == 0 else out_channels
             resnets.append(
                 ResnetBlock3D(
-                    in_channels=in_channels,
+                    in_channels=in_ch,
                     out_channels=out_channels,
                     eps=resnet_eps,
                     groups=resnet_groups,
@@ -297,38 +293,27 @@ class DownBlock3D(nn.Module):
         self.resnets = nn.ModuleList(resnets)
 
         if add_downsample:
-            self.downsamplers = nn.ModuleList(
-                [
-                    Downsample3D(
-                        out_channels,
-                        out_channels=out_channels
-                    )
-                ]
-            )
+            self.downsamplers = nn.ModuleList([Downsample3D(out_channels, out_channels=out_channels)])
         else:
             self.downsamplers = None
 
         self.gradient_checkpointing = False
 
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, ...]]:
+    def forward(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, Tuple[torch.Tensor, ...]]:
         output_states = ()
 
         for resnet in self.resnets:
             hidden_states = resnet(hidden_states)
-
             output_states += (hidden_states,)
 
         if self.downsamplers is not None:
             for downsampler in self.downsamplers:
                 hidden_states = downsampler(hidden_states)
-
             output_states += (hidden_states,)
 
         return hidden_states, output_states
-    
+
+
 class UpBlock3D(nn.Module):
     def __init__(
         self,
@@ -361,6 +346,7 @@ class UpBlock3D(nn.Module):
                     output_scale_factor=output_scale_factor,
                 )
             )
+
         self.resnets = nn.ModuleList(resnets)
 
         if add_upsample:
@@ -380,7 +366,7 @@ class UpBlock3D(nn.Module):
             res_hidden_states = res_hidden_states_tuple[-1]
             res_hidden_states_tuple = res_hidden_states_tuple[:-1]
 
-
+            # Concatenate skip connections
             hidden_states = torch.cat([hidden_states, res_hidden_states], dim=1)
             hidden_states = resnet(hidden_states)
 
@@ -408,6 +394,7 @@ class UNetMidBlock3D(nn.Module):
         self.has_cross_attention = True
         resnet_groups = resnet_groups if resnet_groups is not None else min(in_channels // 4, 32)
 
+        # First ResnetBlock
         resnets = [
             ResnetBlock3D(
                 in_channels=in_channels,
@@ -420,6 +407,7 @@ class UNetMidBlock3D(nn.Module):
             )
         ]
 
+        # Remaining layers
         for _ in range(num_layers):
             resnets.append(
                 ResnetBlock3D(
@@ -435,14 +423,12 @@ class UNetMidBlock3D(nn.Module):
 
         self.resnets = nn.ModuleList(resnets)
 
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-    ) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # Preserve dtype (fp16 or fp32)
         for resnet in self.resnets:
             hidden_states = resnet(hidden_states)
-
         return hidden_states
+
     
 def create_custom_forward(module, return_dict=None):
     def custom_forward(*inputs):
@@ -684,9 +670,9 @@ class UNet3DModel(nn.Module):
         output = output / weight_sum[None, None, :, None, None]
         
         return output
-
+    
     def _process_chunk(self, chunk: torch.Tensor):
-        """Process a single chunk through the UNet"""
+        """Process a single chunk through the UNet (FP16-safe)"""
         default_overall_up_factor = 2**self.num_upsamplers
         forward_upsample_size = False
         upsample_size = None
@@ -694,7 +680,11 @@ class UNet3DModel(nn.Module):
         if any(s % default_overall_up_factor != 0 for s in chunk.shape[-2:]):
             forward_upsample_size = True
 
-        sample = self.conv_in(chunk)
+        # Store input dtype
+        input_dtype = chunk.dtype
+
+        # Convert conv_in to match input dtype
+        sample = self.conv_in(chunk.to(self.conv_in.weight.dtype))
 
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:
@@ -704,7 +694,6 @@ class UNet3DModel(nn.Module):
                 )
             else:
                 sample, res_samples = downsample_block(hidden_states=sample)
-
             down_block_res_samples += res_samples
 
         if self.mid_block is not None:
@@ -723,7 +712,7 @@ class UNet3DModel(nn.Module):
 
             if not is_final_block and forward_upsample_size:
                 upsample_size = down_block_res_samples[-1].shape[2:]
-                
+
             if self.use_checkpoint:
                 sample = torch.utils.checkpoint.checkpoint(
                     upsample_block, (sample, res_samples, upsample_size), use_reentrant=False
@@ -735,51 +724,56 @@ class UNet3DModel(nn.Module):
                     upsample_size=upsample_size,
                 )
 
+        # FP16-safe normalization
         if self.conv_norm_out:
-            dtype = sample.dtype
-            sample = self.conv_norm_out(sample.float()).to(dtype)
+            target_dtype = self.conv_norm_out.weight.dtype
+            sample = sample.to(target_dtype)
+            sample = self.conv_norm_out(sample)
             sample = self.conv_act(sample)
-            
+
         if self.conv_out is not None:
+            # Convert conv_out weights to input dtype to match sample
+            sample = sample.to(self.conv_out.weight.dtype)
             sample = self.conv_out(sample)
-            return F.tanh(sample) * 2
+            return torch.tanh(sample) * 2
         else:
             return sample
+
 
     def forward(self, sample: torch.Tensor):
         B, C, T, H, W = sample.shape
         device = sample.device
-        dtype = sample.dtype
-        
+        input_dtype = sample.dtype
+
         # Check if we should use chunking
         chunks_indices = self._get_chunks(T)
-        
+
         if len(chunks_indices) == 1:
             # Process without chunking
             return self._process_chunk(sample)
-        
+
         # Process each chunk
         chunks_results = []
         for start, end in chunks_indices:
             chunk = sample[:, :, start:end]
-            
+
             # Verify chunk size is valid
             chunk_temporal_size = chunk.shape[2]
             if chunk_temporal_size < self.min_temporal_size:
                 print(f"Warning: Chunk size {chunk_temporal_size} is smaller than minimum {self.min_temporal_size}, processing without chunking")
                 return self._process_chunk(sample)
-            
+
             # Clear cache before processing each chunk
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            
+
             chunk_result = self._process_chunk(chunk)
             chunks_results.append(chunk_result.cpu())  # Move to CPU to save VRAM
-        
-        # Move results back to GPU and blend
-        chunks_results = [chunk.to(device) for chunk in chunks_results]
-        result = self._blend_chunks(chunks_results, chunks_indices, T, device, dtype)
-        
+
+        # Move results back to device and blend
+        chunks_results = [chunk.to(device=device, dtype=input_dtype) for chunk in chunks_results]
+        result = self._blend_chunks(chunks_results, chunks_indices, T, device, input_dtype)
+
         return result
 
     def set_chunking_params(self, chunk_size: int = None, overlap: int = None, enable_chunking: bool = None):
