@@ -7,7 +7,7 @@ pipeline = Direct3DS2Pipeline.from_pretrained(
 pipeline.to("cuda:0")
 with autocast(True):
   mesh = pipeline(
-    'assets/0.png', 
+    'assets/test/0.png', 
     sdf_resolution=1024, # 512 or 1024
     remove_interior=True,
     remesh=True, # Switch to True if you need to reduce the number of triangles.
