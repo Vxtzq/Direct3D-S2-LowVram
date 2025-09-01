@@ -1,0 +1,11 @@
+*.pyc
+*__pycache__*
+*.egg-info
+*build*
+weights
+*.so
+*.obj
+output
+outputs
+.gradio
+*.so
