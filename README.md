@@ -18,7 +18,7 @@
 - *torch>2.0.0*
 - *cuda 11.8* or above
 
-- Install dependencies:
+### Install dependencies:
 
   ```bash
   git clone https://github.com/DreamTechAI/Direct3D-S2.git
@@ -30,14 +30,14 @@
   pip install -e .
   
   ```
-- Install torchsparse
+### Install torchsparse
   ```bash
 
   export MAX_JOBS=4
   pip install git+https://github.com/Deathdadev/torchsparse.git
   ```
 
-- Install submodules 
+### Install submodules 
   ```bash
   cd third_party
   cd voxelize
