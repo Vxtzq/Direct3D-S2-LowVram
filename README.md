@@ -16,19 +16,25 @@
 # Changes
 
 ## Original repo : 
-<details>
-<summary>1920 × 1080 (1080p)</summary>
+| Resolution | VRAM Requirements |
+|------------|------------------|
+| 512      | 10 GB           |
+| 1024         | 24 GB         |
 
-**VRAM requirements:** Minimum: ~2 GB · Typical: ~4 GB · High textures: 6+ GB
+## This repo :
+Without using refiner :
+| Resolution | VRAM Requirements |
+|------------|------------------|
+| 512      | 4 GB           |
+| 1024         | 8 GB         |
 
-</details>
+With refiner :
+| Resolution | VRAM Requirements |
+|------------|------------------|
+| 1080p      | 6 GB           |
+| 4K         | 8 GB         |
 
-<details>
-<summary>3840 × 2160 (4K)</summary>
-
-**VRAM requirements:** Minimum: ~6 GB · Typical: 8–12 GB · Heavy: 12+ GB
-
-</details>
+Note that refiner usage decreases inference speed, due to patched processing of voxels
 
 
 
