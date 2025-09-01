@@ -1,5 +1,5 @@
 
-# Direct3D‑S2: Gigascale 3D Generation Made Easy with Spatial Sparse Attention
+# Direct3D‑S2-LowVram: Gigascale 3D Generation Made Easy with Spatial Sparse Attention on Lower GPU !
 
 <div align="center">
   <a href=https://www.neural4d.com/research/direct3d-s2 target="_blank"><img src=https://img.shields.io/badge/Project%20Page-333399.svg?logo=googlehome height=22px></a>
