@@ -12,7 +12,32 @@
 </div>
 
 ---
+# Easy install 
+- Install dependencies:
 
+  ```bash
+  git clone https://github.com/DreamTechAI/Direct3D-S2.git
+  
+  cd Direct3D-S2
+  
+  pip install -r requirements.txt
+  
+  pip install -e .
+  
+  ```
+- Install torchsparse
+```bash
+# Or build from source
+export MAX_JOBS=4
+pip install git+https://github.com/Deathdadev/torchsparse.git
+```
+
+- Install submodules 
+```bash
+# Or build from source
+export MAX_JOBS=4
+pip install git+https://github.com/Deathdadev/torchsparse.git
+```
 # Changes
 
 This is an **optimized version** of the original repo [Direct3D-S2](https://github.com/DreamTechAI/Direct3D-S2) from DreamTechAI, designed to **work with ~3x less VRAM** at the cost of some inference speed.
@@ -36,15 +61,15 @@ This is an **optimized version** of the original repo [Direct3D-S2](https://gith
 
 **Without refiner:**
 
-| Resolution | VRAM Requirements |
-|------------|-----------------|
+| Resolution | VRAM Requirements | Inference Time |
+|------------|-----------------|----------------|
 | 512        | 4 GB            |
 | 1024       | 8 GB            |
 
 **With refiner:**
 
-| Resolution | VRAM Requirements |
-|------------|-----------------|
+| Resolution | VRAM Requirements | Inference Time |
+|------------|-----------------|----------------|
 | 1080p      | 6 GB            |
 | 4K         | 8 GB            |
 
