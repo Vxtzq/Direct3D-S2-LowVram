@@ -13,13 +13,31 @@
 </div>
 
 ---
+# Changes
 
-## ✨ News
-- June 3, 2025: We are preparing the v1.2 release, featuring enhanced character generation. Stay tuned!
-- May 30, 2025: 🤯 We have released both v1.0 and v1.1. The new model offers even greater speed compared to FlashAttention-2, with **12.2×** faster forward pass and **19.7×** faster backward pass, resulting in nearly **2×** inference speedup over v1.0.
-- May 30, 2025: 🔨 Release inference code and model.
-- May 26, 2025: 🎁 Release live demo on 🤗 [Hugging Face](https://huggingface.co/spaces/wushuang98/Direct3D-S2-v1.0-demo).
-- May 26, 2025: 🚀 Release paper and project page.
+## Original repo : 
+<details>
+<summary>1920 × 1080 (1080p)</summary>
+
+**VRAM requirements:** Minimum: ~2 GB · Typical: ~4 GB · High textures: 6+ GB
+
+</details>
+
+<details>
+<summary>3840 × 2160 (4K)</summary>
+
+**VRAM requirements:** Minimum: ~6 GB · Typical: 8–12 GB · Heavy: 12+ GB
+
+</details>
+
+
+
+
+## ✨ Credits
+- Original Direct3D-S2 Implementation : https://github.com/DreamTechAI/Direct3D-S2
+- Direct3D-S2 authors for their work
+
+# Original repository description
 
 ## 📝 Abstract
 
@@ -47,7 +65,7 @@ Generating high-resolution 3D shapes using volumetric representations such as Si
   ```bash
   pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
   ```
-- **Torchsparse**:
+- **Torchsparse**:https://github.com/DreamTechAI/Direct3D-S2
   follow the [offical guide](https://github.com/mit-han-lab/torchsparse) or:
   
   ```bash
@@ -69,8 +87,6 @@ Generating high-resolution 3D shapes using volumetric representations such as Si
   ```
 
 ### Usage
-
-> Note: Generating at 512 resolution requires at least 10GB of VRAM, and 1024 resolution needs around 24GB. We don’t recommend generating models at 512 resolution, as it’s just an intermediate step of the 1024 model and the quality is noticeably lower.
 
 ```python
 from direct3d_s2.pipeline import Direct3DS2Pipeline
