@@ -39,10 +39,12 @@
 
 ### Install submodules 
   ```bash
+  pip install -r requirements.txt
   cd third_party
   cd voxelize
   python setup.py install
   ```
+
 ### Test installation
   ```
   python inference.py
