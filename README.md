@@ -83,7 +83,7 @@ Note that 6GB vram are required to load the pipeline, might be easy to decrease 
 
 | Resolution | VRAM Requirements | Inference Time |
 |------------|-----------------|----------------|
-| 1080p      | 6 GB            |~90 seconds |
+| 1080p      | 8 GB            |~90 seconds |
 | 4K         | 8 GB            |~320 seconds |
 
 > ⚠️ Note: Using the refiner decreases inference speed due to patched processing of voxels.
