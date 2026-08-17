@@ -21,7 +21,7 @@
 ### Install dependencies:
 
   ```bash
-  git clone https://github.com/DreamTechAI/Direct3D-S2.git
+  git clone https://github.com/Vxtzq/Direct3D-S2-LowVram.git
   
   cd Direct3D-S2
   
